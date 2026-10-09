@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  font-family: "DM Sans", sans-serif;
+  color: #202c28;
+  background: #f8f8f5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+.font-display { font-family: "Manrope", sans-serif; }
+.container-wide { width: min(1180px, calc(100% - 48px)); margin-inline: auto; }
+.soft-shadow { box-shadow: 0 18px 50px rgba(27, 43, 36, .07); }
+.admin-shadow { box-shadow: 0 4px 22px rgba(28, 45, 37, .045); }
+
+@media (max-width: 640px) {
+  .container-wide { width: min(100% - 32px, 1180px); }
+}
