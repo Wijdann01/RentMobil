@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { defaultHeroImage, formatLocalDate, initialCars, initialServices, normalizeServices, sampleBookings } from '../data'
+import { defaultHeroImage, formatLocalDate, initialServices, normalizeServices } from '../data'
 import { isSupabaseConfigured, supabase } from './supabase'
 
 const isDemo = !isSupabaseConfigured
@@ -14,9 +14,13 @@ const readLocal = (key, fallback) => {
   }
 }
 
-const cars = ref(readLocal('cars', initialCars).map((car) => ({ quantity: 1, ...car })))
+const demoVehicleIds = new Set(['car-1', 'car-2', 'car-3', 'car-4'])
+const demoBookingIds = new Set(['booking-1', 'booking-2', 'booking-3', 'booking-4'])
+const cars = ref(readLocal('cars', [])
+  .filter((car) => !demoVehicleIds.has(car.id))
+  .map((car) => ({ quantity: 1, ...car })))
 const services = ref(normalizeServices(readLocal('services', initialServices)))
-const bookings = ref(readLocal('bookings', sampleBookings()))
+const bookings = ref(readLocal('bookings', []).filter((booking) => !demoBookingIds.has(booking.id)))
 const heroImage = ref(readLocal('hero-image', defaultHeroImage))
 const availability = ref({})
 const busy = ref(false)

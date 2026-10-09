@@ -45,14 +45,6 @@ create table if not exists public.bookings (
   constraint booking_dates_valid check (return_date >= pickup_date)
 );
 
-insert into public.vehicles (id, name, category, transmission, seats, price, image)
-values
-  ('car-1', 'Toyota Avanza Veloz', 'MPV', 'Automatic', 7, 450000, 'https://images.unsplash.com/photo-1621007947382-bb3c3994e3fb?auto=format&fit=crop&w=1000&q=85'),
-  ('car-2', 'Honda HR-V SE', 'SUV', 'Automatic', 5, 650000, 'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1000&q=85'),
-  ('car-3', 'Mitsubishi Xpander', 'MPV', 'Automatic', 7, 500000, 'https://images.unsplash.com/photo-1552519507-da3b142c6e3d?auto=format&fit=crop&w=1000&q=85'),
-  ('car-4', 'Toyota Innova Zenix', 'Premium', 'Automatic', 7, 850000, 'https://images.unsplash.com/photo-1617469767053-d3b523a0b982?auto=format&fit=crop&w=1000&q=85')
-on conflict (id) do nothing;
-
 insert into public.services (id, name, description, icon, requires_address)
 values
   ('service-2', 'Mobil + sopir', 'Perjalanan lebih santai ditemani sopir profesional kami.', 'user-round', false),

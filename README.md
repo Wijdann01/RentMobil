@@ -1,5 +1,9 @@
 "# Proyek saya" 
 
+Armada dan booking tidak lagi memakai data contoh lokal. Website dan dashboard mengambil armada langsung dari tabel `public.vehicles` Supabase; tambahkan armada yang benar melalui dashboard admin. Skema baru tidak lagi memasukkan contoh Toyota/Honda.
+
+Jika database lama masih berisi empat armada contoh, jalankan `supabase/remove-demo-vehicles.sql` melalui Supabase SQL Editor. Skrip menghapus contoh yang belum pernah dipakai booking, dan hanya menonaktifkan contoh yang masih dirujuk booking agar riwayat pelanggan tetap aman. Jangan hapus baris tersebut secara manual dari tabel `vehicles` selama ada booking yang merujuknya."
+
 ## Menjalankan booking secara lokal
 
 Jalankan `npm run dev` seperti biasa. Vite sekarang menyediakan endpoint backend lokal `POST /api/bookings`, sehingga form tidak lagi mendapat `404` hanya karena API function belum berjalan.
