@@ -1,6 +1,8 @@
 import { computed, ref } from 'vue'
-import { formatLocalDate, initialCars, initialServices, normalizeServices, sampleBookings } from '../data'
+import { defaultHeroImage, formatLocalDate, initialCars, initialServices, normalizeServices, sampleBookings } from '../data'
 import { isSupabaseConfigured, supabase } from './supabase'
+
+const isDemo = !isSupabaseConfigured
 
 const readLocal = (key, fallback) => {
   try {
@@ -15,6 +17,7 @@ const readLocal = (key, fallback) => {
 const cars = ref(readLocal('cars', initialCars).map((car) => ({ quantity: 1, ...car })))
 const services = ref(normalizeServices(readLocal('services', initialServices)))
 const bookings = ref(readLocal('bookings', sampleBookings()))
+const heroImage = ref(readLocal('hero-image', defaultHeroImage))
 const availability = ref({})
 const busy = ref(false)
 const storeError = ref('')
@@ -57,6 +60,67 @@ async function refreshAvailability(pickupDate = formatLocalDate(), returnDate = 
 
 function persistLocal(key, value) {
   localStorage.setItem(`jalanin-${key}`, JSON.stringify(value))
+}
+
+function publicHeroImageUrl(path, version = Date.now()) {
+  const { data } = supabase.storage.from('site-images').getPublicUrl(path)
+  return `${data.publicUrl}?v=${encodeURIComponent(version)}`
+}
+
+async function refreshHeroImage() {
+  if (!isSupabaseConfigured) return heroImage.value
+
+  const { data, error } = await supabase.storage.from('site-images').list('homepage', {
+    limit: 10,
+    search: 'hero-image',
+  })
+  if (error) throw error
+
+  const storedImage = data.find((file) => file.name === 'hero-image')
+  heroImage.value = storedImage
+    ? publicHeroImageUrl(`homepage/${storedImage.name}`, storedImage.updated_at || Date.now())
+    : defaultHeroImage
+  return heroImage.value
+}
+
+async function saveHeroImage(file) {
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+  const maxSize = isDemo ? 1 : 5
+  if (!allowedTypes.includes(file.type)) throw new Error('Format gambar harus JPG, PNG, atau WebP.')
+  if (file.size > maxSize * 1024 * 1024) throw new Error(`Ukuran gambar maksimal ${maxSize} MB${isDemo ? ' dalam mode demo' : ''}.`)
+
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.storage.from('site-images').upload('homepage/hero-image', file, {
+      cacheControl: '3600',
+      contentType: file.type,
+      upsert: true,
+    })
+    if (error) throw error
+    heroImage.value = publicHeroImageUrl('homepage/hero-image')
+  } else {
+    const reader = new FileReader()
+    const imageData = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = () => reject(new Error('Gambar gagal dibaca. Silakan coba lagi.'))
+      reader.readAsDataURL(file)
+    })
+    heroImage.value = imageData
+    persistLocal('hero-image', imageData)
+  }
+
+  return heroImage.value
+}
+
+async function deleteHeroImage() {
+  if (isSupabaseConfigured) {
+    const { error } = await supabase.storage.from('site-images').remove(['homepage/hero-image'])
+    if (error) throw error
+    heroImage.value = defaultHeroImage
+  } else {
+    heroImage.value = defaultHeroImage
+    localStorage.removeItem('jalanin-hero-image')
+  }
+  return heroImage.value
 }
 
 async function loadCollection(table, fallback) {
@@ -158,10 +222,14 @@ export const useStore = () => ({
   availability,
   busy,
   storeError,
-  isDemo: !isSupabaseConfigured,
+  isDemo,
   availableCars: computed(() => cars.value.filter((car) => car.available)),
+  heroImage,
   getAvailability,
   refreshAvailability,
+  refreshHeroImage,
+  saveHeroImage,
+  deleteHeroImage,
   refresh,
   saveCar: (record) => saveRecord(cars, 'vehicles', record),
   saveService: (record) => saveRecord(services, 'services', record),

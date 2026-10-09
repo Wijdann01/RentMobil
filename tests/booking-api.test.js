@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, test } from 'node:test'
-import handler from '../api/bookings.js'
+import handler, { normalizeSupabaseUrl } from '../api/bookings.js'
 
 const originalFetch = globalThis.fetch
 const originalEnvironment = { ...process.env }
@@ -104,6 +104,11 @@ beforeEach(() => {
   rateLimitAllowed = true
   captchaResult = { success: true, hostname: 'jalanin.test', action: 'booking' }
   bookingErrorCode = undefined
+})
+
+test('normalizes Supabase REST endpoint URLs before creating RPC clients', () => {
+  assert.equal(normalizeSupabaseUrl(' https://project.supabase.co/rest/v1/ '), 'https://project.supabase.co')
+  assert.equal(normalizeSupabaseUrl('https://project.supabase.co/'), 'https://project.supabase.co')
 })
 
 test('creates bookings through server-only RPC without accepting client price or status', async () => {

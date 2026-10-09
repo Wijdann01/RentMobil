@@ -11,6 +11,8 @@ export const initialServices = [
   { id: 'service-4', name: 'Antar jemput stasiun', description: 'Layanan antar jemput dari atau ke stasiun pilihanmu.', icon: 'train-front', active: true, requires_address: true },
 ]
 
+export const defaultHeroImage = 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1500&q=90'
+
 export function normalizeServices(services) {
   const normalized = services
     .filter((service) => service.id !== 'service-1' && service.name.trim().toLowerCase() !== 'lepas kunci')

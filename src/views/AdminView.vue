@@ -4,8 +4,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import { useStore } from '../lib/store'
+import { defaultHeroImage } from '../data'
 
-const { cars, services, bookings, availability, isDemo, refresh, refreshAvailability, saveCar, saveService, saveBooking, deleteCar, deleteService, deleteBooking } = useStore()
+const { cars, services, bookings, availability, heroImage, isDemo, refresh, refreshAvailability, refreshHeroImage, saveHeroImage, deleteHeroImage, saveCar, saveService, saveBooking, deleteCar, deleteService, deleteBooking } = useStore()
 const section = ref('Ringkasan')
 const search = ref('')
 const showEditor = ref(false)
@@ -23,6 +24,9 @@ const editorForm = ref({})
 const imageFile = ref(null)
 const imagePreview = ref('')
 const imageInput = ref(null)
+const heroImageFile = ref(null)
+const heroImagePreview = ref('')
+const heroImageInput = ref(null)
 let authSubscription
 
 const navItems = [
@@ -30,6 +34,7 @@ const navItems = [
   { label: 'Booking', icon: CalendarDays },
   { label: 'Armada', icon: CarFront },
   { label: 'Layanan', icon: Wrench },
+  { label: 'Tampilan', icon: ImagePlus },
 ]
 const pendingCount = computed(() => bookings.value.filter((booking) => booking.status === 'pending').length)
 const confirmedCount = computed(() => bookings.value.filter((booking) => booking.status === 'confirmed').length)
@@ -38,6 +43,7 @@ const totalFleet = computed(() => cars.value.reduce((sum, car) => sum + Number(c
 const availableFleet = computed(() => cars.value.reduce((sum, car) => sum + Number(availability.value[car.id]?.available_quantity ?? (car.available ? car.quantity : 0) ?? 0), 0))
 const filteredBookings = computed(() => bookings.value.filter((booking) => `${booking.customer_name} ${booking.car_name} ${booking.customer_email}`.toLowerCase().includes(search.value.toLowerCase())))
 const filteredCars = computed(() => cars.value.filter((car) => `${car.name} ${car.category}`.toLowerCase().includes(search.value.toLowerCase())))
+const hasCustomHeroImage = computed(() => heroImage.value !== defaultHeroImage)
 const formatPrice = (value) => new Intl.NumberFormat('id-ID').format(value || 0)
 const formatShortPrice = (value) => value >= 1000000 ? `Rp ${(value / 1000000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} jt` : `Rp ${formatPrice(value)}`
 const formatDate = (value) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-'
@@ -68,12 +74,14 @@ onMounted(async () => {
   }
   if (authenticated.value) {
     try { await refresh() } catch (error) { feedback.value = `Gagal memuat data: ${error.message}` }
+    try { await refreshHeroImage() } catch (error) { feedback.value = `Gagal memuat gambar utama website: ${error.message}` }
   }
 })
 
 onBeforeUnmount(() => authSubscription?.unsubscribe())
 onBeforeUnmount(() => {
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
+  if (heroImagePreview.value) URL.revokeObjectURL(heroImagePreview.value)
 })
 
 async function checkAdmin(userId) {
@@ -99,7 +107,10 @@ async function signIn() {
     loginError.value = 'Akun ini belum terdaftar sebagai admin. Minta pemilik toko menambahkan akses admin.'
     await supabase.auth.signOut()
   } else {
-    try { await refresh() } catch (loadError) { feedback.value = `Gagal memuat data: ${loadError.message}` }
+    try {
+      await refresh()
+      await refreshHeroImage()
+    } catch (loadError) { feedback.value = `Gagal memuat data: ${loadError.message}` }
   }
 }
 
@@ -140,6 +151,67 @@ function chooseImage(event) {
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
   imageFile.value = file
   imagePreview.value = URL.createObjectURL(file)
+}
+
+function chooseHeroImage(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+  const maxSize = isDemo ? 1 : 5
+  if (!allowedTypes.includes(file.type)) {
+    feedback.value = 'Format gambar harus JPG, PNG, atau WebP.'
+    event.target.value = ''
+    return
+  }
+  if (file.size > maxSize * 1024 * 1024) {
+    feedback.value = `Ukuran gambar maksimal ${maxSize} MB${isDemo ? ' dalam mode demo' : ''}.`
+    event.target.value = ''
+    return
+  }
+
+  if (heroImagePreview.value) URL.revokeObjectURL(heroImagePreview.value)
+  heroImageFile.value = file
+  heroImagePreview.value = URL.createObjectURL(file)
+}
+
+async function saveHomepageHeroImage() {
+  if (!heroImageFile.value) {
+    feedback.value = 'Pilih gambar baru terlebih dahulu.'
+    return
+  }
+
+  saving.value = true
+  try {
+    await saveHeroImage(heroImageFile.value)
+    heroImageFile.value = null
+    if (heroImagePreview.value) URL.revokeObjectURL(heroImagePreview.value)
+    heroImagePreview.value = ''
+    if (heroImageInput.value) heroImageInput.value.value = ''
+    feedback.value = 'Gambar utama website berhasil diperbarui.'
+  } catch (error) {
+    feedback.value = error.message || 'Gambar utama website gagal disimpan.'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function resetHomepageHeroImage() {
+  if (!window.confirm('Hapus gambar utama kustom dan gunakan gambar bawaan?')) return
+
+  saving.value = true
+  try {
+    await deleteHeroImage()
+    heroImageFile.value = null
+    if (heroImagePreview.value) URL.revokeObjectURL(heroImagePreview.value)
+    heroImagePreview.value = ''
+    if (heroImageInput.value) heroImageInput.value.value = ''
+    feedback.value = 'Gambar utama dihapus. Gambar bawaan website sekarang digunakan.'
+  } catch (error) {
+    feedback.value = error.message || 'Gambar utama website gagal dihapus.'
+  } finally {
+    saving.value = false
+  }
 }
 
 function readImageAsDataUrl(file) {
@@ -281,7 +353,7 @@ async function removeRecord(type, record) {
         <div class="flex items-center justify-between">
           <RouterLink to="/" class="flex items-center gap-2.5">
             <span class="flex h-10 w-10 items-center justify-center rounded-[13px] bg-[#244b3b] text-white"><CarFront :size="21" /></span>
-            <span class="font-display text-[20px] font-extrabold tracking-[-1px] text-[#293d31]">jalanin<span class="text-[#85a487]">.</span></span>
+            <span class="font-display text-[20px] font-extrabold tracking-[-1px] text-[#293d31]">Putra Jaya Rental<span class="text-[#85a487]">.</span></span>
           </RouterLink>
           <button class="rounded-lg p-1.5 text-[#748178] lg:hidden" @click="mobileNav = false"><X :size="19" /></button>
         </div>
@@ -306,7 +378,7 @@ async function removeRecord(type, record) {
         <header class="sticky top-0 z-20 flex h-[72px] items-center justify-between border-b border-[#eaede7] bg-[#f7f8f5]/95 px-4 backdrop-blur sm:px-8">
           <div class="flex items-center gap-3">
             <button class="rounded-lg p-2 text-[#52635a] hover:bg-white lg:hidden" aria-label="Buka navigasi" @click="mobileNav = true"><Menu :size="20" /></button>
-            <div><p class="text-[10px] font-medium text-[#919b92]">Jalanin Rental <span class="mx-1.5">/</span> <span class="text-[#65736a]">{{ section }}</span></p><p class="font-display mt-0.5 text-sm font-bold text-[#35463a]">{{ section === 'Ringkasan' ? 'Ringkasan bisnis' : `Kelola ${section.toLowerCase()}` }}</p></div>
+            <div><p class="text-[10px] font-medium text-[#919b92]">Putra Jaya Rental <span class="mx-1.5">/</span> <span class="text-[#65736a]">{{ section }}</span></p><p class="font-display mt-0.5 text-sm font-bold text-[#35463a]">{{ section === 'Ringkasan' ? 'Ringkasan bisnis' : `Kelola ${section.toLowerCase()}` }}</p></div>
           </div>
           <div class="flex items-center gap-3">
             <button class="relative rounded-xl border border-[#e9ece6] bg-white p-2.5 text-[#748078]" aria-label="Notifikasi"><Bell :size="16" /><span v-if="pendingCount" class="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-[#d59b49]"></span></button>
@@ -364,6 +436,26 @@ async function removeRecord(type, record) {
           <template v-else-if="section === 'Booking'">
             <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p class="text-xs text-[#88938a]">Pesanan dan permintaan pelanggan</p><h1 class="font-display mt-1 text-[28px] font-extrabold tracking-[-1px] text-[#2d4033]">Booking</h1><p class="mt-1 text-sm text-[#7c887f]">Perbarui status dan pantau semua permintaan sewa.</p></div><div class="flex items-center gap-2 rounded-xl border border-[#e8ebe5] bg-white px-3 py-2.5"><Search :size="15" class="text-[#98a199]" /><input v-model="search" class="w-full bg-transparent text-xs outline-none placeholder:text-[#a0a9a1] sm:w-48" placeholder="Cari nama atau mobil..." /></div></div>
             <div class="admin-shadow overflow-hidden rounded-[18px] border border-[#eceee9] bg-white"><div class="overflow-x-auto"><table class="w-full min-w-[860px] text-left"><thead><tr class="bg-[#fbfcfa] text-[10px] font-bold uppercase tracking-wider text-[#9aa39a]"><th class="px-5 py-3.5">Pelanggan</th><th class="px-4 py-3.5">Mobil & layanan</th><th class="px-4 py-3.5">Periode sewa</th><th class="px-4 py-3.5">Total</th><th class="px-4 py-3.5">Status</th><th class="px-4 py-3.5">Ubah status</th><th class="px-4 py-3.5"></th></tr></thead><tbody><tr v-for="booking in filteredBookings" :key="booking.id" class="border-t border-[#f1f2ee] text-xs"><td class="px-5 py-4"><p class="font-semibold text-[#4b5a4e]">{{ booking.customer_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.customer_email }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.customer_phone }}</p></td><td class="px-4 py-4"><p class="font-semibold text-[#58655a]">{{ booking.car_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.service_name }}</p><p v-if="booking.pickup_address" class="mt-1 max-w-[210px] text-[10px] leading-4 text-[#63766a]">Lokasi: {{ booking.pickup_address }}</p></td><td class="px-4 py-4 text-[#69766c]">{{ formatDate(booking.pickup_date) }}<p class="mt-1 text-[10px] text-[#959d95]">s/d {{ formatDate(booking.return_date) }}</p></td><td class="px-4 py-4 font-semibold text-[#536d56]">Rp{{ formatPrice(booking.total_price) }}</td><td class="px-4 py-4"><span class="rounded-full px-2.5 py-1 text-[10px] font-semibold" :class="statusClass(booking.status)">{{ statusLabel(booking.status) }}</span></td><td class="px-4 py-4"><select :value="booking.status" class="rounded-lg border border-[#e9ece6] bg-white px-2 py-1.5 text-[10px] text-[#627067] outline-none" @change="changeStatus(booking, $event.target.value, $event)"><option value="pending">Menunggu</option><option value="confirmed">Dikonfirmasi</option><option value="completed">Selesai</option><option value="cancelled">Dibatalkan</option></select></td><td class="px-4 py-4"><button class="rounded-lg p-2 text-[#b77b75] hover:bg-[#fbefed]" aria-label="Hapus booking" @click="removeRecord('bookings', booking)"><Trash2 :size="15" /></button></td></tr></tbody></table><div v-if="!filteredBookings.length" class="p-12 text-center text-sm text-[#89958c]">Belum ada booking yang cocok.</div></div></div>
+          </template>
+
+          <template v-else-if="section === 'Tampilan'">
+            <div class="mb-7"><p class="text-xs text-[#88938a]">Atur gambar yang tampil di halaman depan</p><h1 class="font-display mt-1 text-[28px] font-extrabold tracking-[-1px] text-[#2d4033]">Tampilan website</h1><p class="mt-1 text-sm text-[#7c887f]">Ganti atau hapus gambar utama pada bagian hero halaman beranda.</p></div>
+            <section class="admin-shadow max-w-3xl overflow-hidden rounded-[18px] border border-[#eceee9] bg-white">
+              <div class="aspect-[16/8] bg-[#e7e9e2]">
+                <img class="h-full w-full object-cover" :src="heroImagePreview || heroImage" alt="Pratinjau gambar utama website" />
+              </div>
+              <div class="p-5 sm:p-6">
+                <p class="text-sm font-bold text-[#3c4d40]">Gambar utama halaman depan</p>
+                <p class="mt-1 text-xs leading-5 text-[#849087]">{{ hasCustomHeroImage ? 'Gambar kustom sedang digunakan.' : 'Gambar bawaan sedang digunakan.' }} Unggah JPG, PNG, atau WebP, maksimal {{ isDemo ? '1' : '5' }} MB.</p>
+                <input ref="heroImageInput" type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="chooseHeroImage" />
+                <div class="mt-5 flex flex-wrap gap-2">
+                  <button type="button" class="inline-flex items-center gap-2 rounded-full bg-[#edf2ec] px-4 py-2.5 text-xs font-bold text-[#45664d] hover:bg-[#e2ebe1]" @click="heroImageInput?.click()"><ImagePlus :size="15" /> Pilih gambar</button>
+                  <button type="button" :disabled="!heroImageFile || saving" class="rounded-full bg-[#244b3b] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#18392c] disabled:cursor-not-allowed disabled:opacity-50" @click="saveHomepageHeroImage">{{ saving ? 'Menyimpan...' : 'Simpan gambar' }}</button>
+                  <button v-if="hasCustomHeroImage" type="button" :disabled="saving" class="inline-flex items-center gap-2 rounded-full border border-[#f0dddd] px-4 py-2.5 text-xs font-bold text-[#a95e58] hover:bg-[#fbefed] disabled:opacity-50" @click="resetHomepageHeroImage"><Trash2 :size="14" /> Hapus dan gunakan bawaan</button>
+                </div>
+                <p v-if="isDemo" class="mt-4 rounded-xl bg-[#f8f6ee] px-3.5 py-3 text-[11px] leading-5 text-[#81734f]">Mode demo menyimpan gambar di browser ini saja. Hubungkan Supabase dan jalankan migrasi bucket agar gambar tampil ke semua pengunjung.</p>
+              </div>
+            </section>
           </template>
 
           <template v-else-if="section === 'Armada'">

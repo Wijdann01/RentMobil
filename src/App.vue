@@ -12,7 +12,7 @@ const route = useRoute()
     <header class="container-wide relative z-20 flex h-[82px] items-center justify-between">
       <RouterLink to="/" class="flex items-center gap-2.5" @click="menuOpen = false">
         <span class="flex h-10 w-10 items-center justify-center rounded-[14px] bg-[#244b3b] text-white"><CarFront :size="23" /></span>
-        <span class="font-display text-[21px] font-extrabold tracking-[-1px]">jalanin<span class="text-[#84a88b]">.</span></span>
+        <span class="font-display text-[21px] font-extrabold tracking-[-1px]">Putra Jaya Rental<span class="text-[#84a88b]">.</span></span>
       </RouterLink>
       <nav class="hidden items-center gap-9 text-sm font-medium text-[#5f6b63] md:flex">
         <RouterLink to="/#armada" class="transition hover:text-[#244b3b]">Pilihan mobil</RouterLink>

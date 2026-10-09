@@ -5,7 +5,7 @@ import { formatLocalDate } from '../data'
 import TurnstileWidget from '../components/TurnstileWidget.vue'
 import { useStore } from '../lib/store'
 
-const { availableCars, availability, services, saveBooking, getAvailability, refresh, isDemo } = useStore()
+const { availableCars, availability, services, heroImage, saveBooking, getAvailability, refresh, refreshHeroImage, isDemo } = useStore()
 const selectedCategory = ref('Semua')
 const bookingCar = ref(null)
 const submitting = ref(false)
@@ -29,7 +29,11 @@ const formatPrice = (value) => new Intl.NumberFormat('id-ID').format(value)
 const today = formatLocalDate()
 const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || ''
 
-onMounted(() => refresh({ includeBookings: false, pickupDate: today, returnDate: today }).catch((error) => console.error('Gagal memuat katalog mobil.', error)))
+onMounted(() => {
+  refresh({ includeBookings: false, pickupDate: today, returnDate: today })
+    .catch((error) => console.error('Gagal memuat katalog mobil.', error))
+  refreshHeroImage().catch((error) => console.error('Gagal memuat gambar hero website.', error))
+})
 
 function openBooking(car) {
   bookingCar.value = car
@@ -174,7 +178,7 @@ async function submitBooking() {
       </div>
       <div class="relative min-h-[360px] lg:h-[480px]">
         <div class="absolute inset-0 overflow-hidden rounded-[30px] bg-[#dbe2d8]">
-          <img class="h-full w-full object-cover" src="https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=1500&q=90" alt="Mobil siap menemani perjalanan" />
+          <img class="h-full w-full object-cover" :src="heroImage" alt="Mobil siap menemani perjalanan" />
           <div class="absolute inset-0 bg-gradient-to-t from-[#20362d]/30 via-transparent to-transparent"></div>
         </div>
         <div class="soft-shadow absolute bottom-5 left-5 flex items-center gap-3 rounded-2xl bg-white/95 p-4 backdrop-blur sm:bottom-7 sm:left-7">
@@ -233,7 +237,7 @@ async function submitBooking() {
           <p class="mb-3 text-xs font-bold uppercase tracking-[2px] text-[#79917b]">Layanan yang bikin nyaman</p>
           <h2 class="font-display text-3xl font-extrabold leading-tight tracking-[-1.5px] text-[#263a30] sm:text-[40px]">Berangkat dengan caramu sendiri.</h2>
           <p class="mt-4 max-w-[440px] text-sm leading-7 text-[#78837a]">Rencana setiap orang berbeda. Makanya kami siapkan pilihan layanan yang bisa disesuaikan dengan perjalananmu.</p>
-          <a href="https://wa.me/62895336271115" class="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#46674f]">Tanya-tanya dulu juga boleh <MoveRight :size="16" /></a>
+          <a href="https://wa.me/6282217492009" class="mt-6 inline-flex items-center gap-2 text-sm font-bold text-[#46674f]">Tanya-tanya dulu juga boleh <MoveRight :size="16" /></a>
         </div>
         <div class="grid gap-3 sm:grid-cols-2">
           <article v-for="(service, index) in services.filter((item) => item.active)" :key="service.id" class="rounded-[20px] border border-[#e9ebe5] bg-white p-5 transition hover:border-[#b9cabb] hover:shadow-md" :class="index === 2 ? 'sm:col-span-2' : ''">
@@ -257,12 +261,12 @@ async function submitBooking() {
 
     <footer class="border-t border-[#e9ebe5] py-7">
       <div class="container-wide flex flex-col items-center justify-between gap-4 text-xs text-[#858e86] sm:flex-row">
-        <span>© 2026 Jalanin. Teman baik di setiap perjalanan.</span>
+        <span>© 2026 Putra Jaya Rental. Teman baik di setiap perjalanan.</span>
         <span class="flex items-center gap-2"><ShieldCheck :size="14" /> Aman, nyaman, dan transparan.</span>
       </div>
     </footer>
 
-    <a href="https://wa.me/62895336271115" aria-label="Hubungi kami via WhatsApp" class="fixed bottom-6 right-6 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-[#3d7251] text-white shadow-lg transition hover:scale-105"><MessageCircle :size="21" /></a>
+    <a href="https://wa.me/6282217492009" aria-label="Hubungi kami via WhatsApp" class="fixed bottom-6 right-6 z-20 flex h-12 w-12 items-center justify-center rounded-full bg-[#3d7251] text-white shadow-lg transition hover:scale-105"><MessageCircle :size="21" /></a>
 
     <div v-if="bookingCar" class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[#18271f]/55 p-4 backdrop-blur-sm" @click.self="bookingCar = null">
       <form class="my-auto w-full max-w-[470px] rounded-[24px] bg-white p-6 shadow-2xl sm:p-8" @submit.prevent="submitBooking">

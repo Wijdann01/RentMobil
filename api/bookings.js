@@ -23,6 +23,10 @@ function hashRateLimitKey(secret, value) {
   return createHmac('sha256', secret).update(value).digest('hex')
 }
 
+export function normalizeSupabaseUrl(configuredUrl) {
+  return configuredUrl.trim().replace(/\/+$/, '').replace(/\/rest\/v1$/i, '')
+}
+
 function validBooking(body) {
   const validDate = (value) => {
     if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -117,7 +121,7 @@ export default async function handler(req, res) {
   let rateAllowed
   let rateError
   try {
-    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    supabase = createClient(normalizeSupabaseUrl(SUPABASE_URL), SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
     const result = await supabase.rpc('consume_booking_rate_limit', {
