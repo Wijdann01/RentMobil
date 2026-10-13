@@ -19,9 +19,6 @@ const route = useRoute()
         <RouterLink to="/#layanan" class="transition hover:text-[#244b3b]">Layanan</RouterLink>
         <RouterLink to="/#tentang" class="transition hover:text-[#244b3b]">Tentang kami</RouterLink>
       </nav>
-      <RouterLink to="/dashboard" class="hidden items-center gap-2 rounded-full bg-[#244b3b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#18392c] md:flex">
-        Dashboard <ArrowUpRight :size="16" />
-      </RouterLink>
       <button class="rounded-lg p-2 text-[#244b3b] md:hidden" aria-label="Buka menu" @click="menuOpen = !menuOpen">
         <X v-if="menuOpen" :size="22" /><Menu v-else :size="22" />
       </button>
