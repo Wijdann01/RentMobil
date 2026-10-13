@@ -29,7 +29,6 @@ const route = useRoute()
         <RouterLink to="/#armada" @click="menuOpen = false">Pilihan mobil</RouterLink>
         <RouterLink to="/#layanan" @click="menuOpen = false">Layanan</RouterLink>
         <RouterLink to="/#tentang" @click="menuOpen = false">Tentang kami</RouterLink>
-        <RouterLink to="/dashboard" @click="menuOpen = false">Dashboard admin →</RouterLink>
       </nav>
     </header>
     <RouterView />
