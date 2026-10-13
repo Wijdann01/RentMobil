@@ -1,12 +1,12 @@
 <script setup>
-import { ArrowLeft, ArrowUpRight, Bell, CalendarDays, CarFront, CircleAlert, Clock3, ImagePlus, LayoutDashboard, LogOut, Menu, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, Trash2, TrendingUp, Users, Wrench, X } from '@lucide/vue'
+import { ArrowLeft, ArrowUpRight, Bell, CalendarDays, CarFront, CircleAlert, Clock3, ImagePlus, LayoutDashboard, LogOut, Menu, MoreHorizontal, Plus, Search, Settings2, ShieldCheck, Trash2, TrendingUp, Users, WalletCards, Wrench, X } from '@lucide/vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { isSupabaseConfigured, supabase } from '../lib/supabase'
 import { useStore } from '../lib/store'
 import { defaultHeroImage } from '../data'
 
-const { cars, services, bookings, availability, heroImage, isDemo, refresh, refreshAvailability, refreshHeroImage, saveHeroImage, deleteHeroImage, saveCar, saveService, saveBooking, deleteCar, deleteService, deleteBooking } = useStore()
+const { cars, services, bookings, availability, heroImage, driverFeePerDay, isDemo, refresh, refreshAvailability, refreshHeroImage, refreshRentalPricing, saveDriverFee, getVehiclePlates, confirmBookingWithUnit, saveCarWithPlates, saveHeroImage, deleteHeroImage, saveService, saveBooking, deleteCar, deleteService, deleteBooking } = useStore()
 const section = ref('Ringkasan')
 const search = ref('')
 const showEditor = ref(false)
@@ -27,13 +27,18 @@ const imageInput = ref(null)
 const heroImageFile = ref(null)
 const heroImagePreview = ref('')
 const heroImageInput = ref(null)
+const driverFeeInput = ref(driverFeePerDay.value)
+const unitPlatesByCar = ref({})
+const selectedPlateByBooking = ref({})
 let authSubscription
+let bookingChannel
 
 const navItems = [
   { label: 'Ringkasan', icon: LayoutDashboard },
   { label: 'Booking', icon: CalendarDays },
   { label: 'Armada', icon: CarFront },
   { label: 'Layanan', icon: Wrench },
+  { label: 'Tarif', icon: WalletCards },
   { label: 'Tampilan', icon: ImagePlus },
 ]
 const pendingCount = computed(() => bookings.value.filter((booking) => booking.status === 'pending').length)
@@ -75,10 +80,19 @@ onMounted(async () => {
   if (authenticated.value) {
     try { await refresh() } catch (error) { feedback.value = `Gagal memuat data: ${error.message}` }
     try { await refreshHeroImage() } catch (error) { feedback.value = `Gagal memuat gambar utama website: ${error.message}` }
+    try {
+      driverFeeInput.value = await refreshRentalPricing()
+    } catch (error) {
+      feedback.value = `Gagal memuat tarif sopir: ${error.message}`
+    }
+    subscribeToBookingChanges()
   }
 })
 
-onBeforeUnmount(() => authSubscription?.unsubscribe())
+onBeforeUnmount(() => {
+  authSubscription?.unsubscribe()
+  if (bookingChannel) supabase.removeChannel(bookingChannel)
+})
 onBeforeUnmount(() => {
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
   if (heroImagePreview.value) URL.revokeObjectURL(heroImagePreview.value)
@@ -90,6 +104,81 @@ async function checkAdmin(userId) {
   authenticated.value = Boolean(data)
   sessionReady.value = true
   return authenticated.value
+}
+
+function subscribeToBookingChanges() {
+  if (!isSupabaseConfigured || bookingChannel) return
+
+  bookingChannel = supabase
+    .channel('admin-bookings')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bookings' }, () => {
+      refresh().catch((error) => {
+        feedback.value = `Booking baru masuk, tetapi data gagal diperbarui: ${error.message}`
+      })
+    })
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        feedback.value = 'Pembaruan booking langsung terputus. Pindah tab admin untuk memuat ulang data.'
+      }
+    })
+}
+
+async function selectSection(label) {
+  section.value = label
+  mobileNav.value = false
+  try {
+    await refresh()
+    if (label === 'Booking') {
+      const plateEntries = await Promise.all(cars.value.map(async (car) => [
+        car.id,
+        await getVehiclePlates(car.id),
+      ]))
+      unitPlatesByCar.value = Object.fromEntries(plateEntries)
+      selectedPlateByBooking.value = Object.fromEntries(
+        bookings.value
+          .filter((booking) => booking.assigned_license_plate)
+          .map((booking) => [booking.id, booking.assigned_license_plate]),
+      )
+    } else if (label === 'Tarif') {
+      driverFeeInput.value = await refreshRentalPricing()
+    } else if (label === 'Tampilan') {
+      await refreshHeroImage()
+    }
+  } catch (error) {
+    feedback.value = `Gagal memuat ulang halaman ${label.toLowerCase()}: ${error.message}`
+  }
+}
+
+function availablePlatesForBooking(booking) {
+  const plates = unitPlatesByCar.value[booking.car_id] || []
+  return plates.filter((plate) => !bookings.value.some((other) =>
+    other.id !== booking.id
+    && other.status === 'confirmed'
+    && other.assigned_license_plate === plate
+    && other.pickup_date <= booking.return_date
+    && other.return_date >= booking.pickup_date,
+  ))
+}
+
+async function confirmBooking(booking) {
+  const plate = selectedPlateByBooking.value[booking.id]
+  if (!plate) {
+    feedback.value = 'Pilih nomor polisi unit sebelum mengonfirmasi booking.'
+    return
+  }
+
+  try {
+    await confirmBookingWithUnit(booking, plate)
+    feedback.value = `Booking dikonfirmasi dengan unit ${plate}.`
+  } catch (error) {
+    feedback.value = error.message || 'Booking gagal dikonfirmasi.'
+    return
+  }
+  try {
+    await refreshAvailability()
+  } catch (error) {
+    feedback.value = `Booking terkonfirmasi dengan unit ${plate}, tetapi ketersediaan stok gagal diperbarui: ${error.message}`
+  }
 }
 
 async function signIn() {
@@ -110,25 +199,53 @@ async function signIn() {
     try {
       await refresh()
       await refreshHeroImage()
+      driverFeeInput.value = await refreshRentalPricing()
+      subscribeToBookingChanges()
     } catch (loadError) { feedback.value = `Gagal memuat data: ${loadError.message}` }
   }
 }
 
 async function signOut() {
   if (isSupabaseConfigured) await supabase.auth.signOut()
+  if (bookingChannel) {
+    await supabase.removeChannel(bookingChannel)
+    bookingChannel = null
+  }
   authenticated.value = false
 }
 
-function openEditor(type, record = null) {
+async function openEditor(type, record = null) {
   if (imagePreview.value) URL.revokeObjectURL(imagePreview.value)
   imageFile.value = null
   imagePreview.value = ''
   editorType.value = type
   editing.value = record
   const id = record?.id || crypto.randomUUID()
-  if (type === 'vehicles') editorForm.value = record ? { ...record } : { id, name: '', category: 'MPV', transmission: 'Automatic', seats: 7, price: 450000, quantity: 1, image: '', available: true }
-  else editorForm.value = record ? { requires_address: false, ...record } : { id, name: '', description: '', icon: 'user-round', active: true, requires_address: false }
+  if (type === 'vehicles') {
+    editorForm.value = record
+      ? { ...record, license_plates: [] }
+      : { id, name: '', category: 'MPV', transmission: 'Automatic', seats: 7, price: 450000, quantity: 1, image: '', available: true, license_plates: [''] }
+    if (record) {
+      try {
+        editorForm.value.license_plates = await getVehiclePlates(record.id)
+      } catch (error) {
+        feedback.value = `Gagal memuat nomor polisi mobil: ${error.message}`
+        return
+      }
+    }
+    const quantity = Math.max(0, Number(editorForm.value.quantity) || 0)
+    editorForm.value.license_plates = Array.from(
+      { length: quantity },
+      (_, index) => editorForm.value.license_plates[index] || '',
+    )
+  } else editorForm.value = record ? { requires_address: false, ...record } : { id, name: '', description: '', icon: 'user-round', active: true, requires_address: false }
   showEditor.value = true
+}
+
+function updateVehiclePlate(index, value) {
+  const plates = [...(editorForm.value.license_plates || [])]
+  plates[index] = value
+  editorForm.value.license_plates = plates
 }
 
 function chooseImage(event) {
@@ -259,9 +376,9 @@ async function submitEditor() {
       }
 
       try {
-        await saveCar(record)
+        await saveCarWithPlates(record, editorForm.value.license_plates || [])
       } catch (error) {
-        if (uploadedImagePath) {
+        if (uploadedImagePath && !error.vehicleSaved) {
           const { error: cleanupError } = await supabase.storage.from('vehicle-images').remove([uploadedImagePath])
           if (cleanupError) throw new Error(`${error.message}. Gambar yang sempat diunggah juga gagal dibersihkan: ${cleanupError.message}`)
         }
@@ -289,6 +406,11 @@ async function submitEditor() {
 
 async function changeStatus(booking, status, event) {
   try {
+    if (status === 'confirmed') {
+      event.target.value = booking.status
+      await confirmBooking(booking)
+      return
+    }
     await saveBooking({ ...booking, status })
     feedback.value = `Booking ${statusLabel(status).toLowerCase()}.`
     try {
@@ -299,6 +421,18 @@ async function changeStatus(booking, status, event) {
   } catch (error) {
     event.target.value = booking.status
     feedback.value = error.message || 'Status gagal diperbarui.'
+  }
+}
+
+async function savePricing() {
+  saving.value = true
+  try {
+    driverFeeInput.value = await saveDriverFee(driverFeeInput.value)
+    feedback.value = 'Biaya sopir per hari berhasil diperbarui.'
+  } catch (error) {
+    feedback.value = error.message || 'Biaya sopir gagal disimpan.'
+  } finally {
+    saving.value = false
   }
 }
 
@@ -359,7 +493,7 @@ async function removeRecord(type, record) {
         </div>
         <p class="mb-3 mt-10 px-3 text-[10px] font-bold uppercase tracking-[1.5px] text-[#a0a9a0]">Workspace</p>
         <nav class="space-y-1">
-          <button v-for="item in navItems" :key="item.label" class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[13px] font-medium transition" :class="section === item.label ? 'bg-[#edf2ec] font-bold text-[#34563e]' : 'text-[#748078] hover:bg-[#f7f8f5] hover:text-[#3a5241]'" @click="section = item.label; mobileNav = false">
+          <button v-for="item in navItems" :key="item.label" class="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[13px] font-medium transition" :class="section === item.label ? 'bg-[#edf2ec] font-bold text-[#34563e]' : 'text-[#748078] hover:bg-[#f7f8f5] hover:text-[#3a5241]'" @click="selectSection(item.label)">
             <component :is="item.icon" :size="17" />
             <span>{{ item.label }}</span>
             <span v-if="item.label === 'Booking' && pendingCount" class="ml-auto rounded-full bg-[#f6e5c9] px-2 py-0.5 text-[10px] font-bold text-[#a7742e]">{{ pendingCount }}</span>
@@ -393,7 +527,7 @@ async function removeRecord(type, record) {
           <template v-if="section === 'Ringkasan'">
             <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div><p class="text-xs text-[#88938a]">{{ new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) }}</p><h1 class="font-display mt-1 text-[26px] font-extrabold tracking-[-1px] text-[#2d4033] sm:text-[30px]">Hai, {{ isDemo ? 'Jalanin' : 'Admin' }} <span>👋</span></h1><p class="mt-1 text-sm text-[#7c887f]">Ini yang sedang terjadi di rentalmu.</p></div>
-              <button class="inline-flex w-fit items-center gap-2 rounded-full bg-[#244b3b] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#18392c]" @click="section = 'Booking'">Lihat booking <ArrowUpRight :size="15" /></button>
+              <button class="inline-flex w-fit items-center gap-2 rounded-full bg-[#244b3b] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#18392c]" @click="selectSection('Booking')">Lihat booking <ArrowUpRight :size="15" /></button>
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -410,7 +544,7 @@ async function removeRecord(type, record) {
 
             <div class="mt-6 grid gap-5 xl:grid-cols-[1.45fr_.8fr]">
               <section class="admin-shadow overflow-hidden rounded-[18px] border border-[#eceee9] bg-white">
-                <div class="flex items-center justify-between border-b border-[#f0f1ed] px-5 py-4"><div><h2 class="text-sm font-bold text-[#3c4d40]">Booking terbaru</h2><p class="mt-1 text-[11px] text-[#919a91]">Pantau permintaan yang baru masuk</p></div><button class="text-xs font-bold text-[#5b785f] hover:text-[#244b3b]" @click="section = 'Booking'">Lihat semua →</button></div>
+                <div class="flex items-center justify-between border-b border-[#f0f1ed] px-5 py-4"><div><h2 class="text-sm font-bold text-[#3c4d40]">Booking terbaru</h2><p class="mt-1 text-[11px] text-[#919a91]">Pantau permintaan yang baru masuk</p></div><button class="text-xs font-bold text-[#5b785f] hover:text-[#244b3b]" @click="selectSection('Booking')">Lihat semua →</button></div>
                 <div class="overflow-x-auto">
                   <table class="w-full min-w-[560px] text-left">
                     <thead><tr class="bg-[#fbfcfa] text-[10px] font-semibold uppercase tracking-wider text-[#9aa39a]"><th class="px-5 py-3">Pelanggan</th><th class="px-4 py-3">Mobil & tanggal</th><th class="px-4 py-3">Total</th><th class="px-5 py-3">Status</th></tr></thead>
@@ -421,21 +555,69 @@ async function removeRecord(type, record) {
               </section>
 
               <section class="admin-shadow rounded-[18px] border border-[#eceee9] bg-white p-5">
-                <div class="flex items-start justify-between"><div><h2 class="text-sm font-bold text-[#3c4d40]">Status armada</h2><p class="mt-1 text-[11px] text-[#919a91]">Ketersediaan mobil saat ini</p></div><button class="rounded-lg p-1.5 text-[#89948b] hover:bg-[#f5f6f3]" aria-label="Kelola armada" @click="section = 'Armada'"><MoreHorizontal :size="17" /></button></div>
+                <div class="flex items-start justify-between"><div><h2 class="text-sm font-bold text-[#3c4d40]">Status armada</h2><p class="mt-1 text-[11px] text-[#919a91]">Ketersediaan mobil saat ini</p></div><button class="rounded-lg p-1.5 text-[#89948b] hover:bg-[#f5f6f3]" aria-label="Kelola armada" @click="selectSection('Armada')"><MoreHorizontal :size="17" /></button></div>
                 <div class="mt-4 space-y-1">
                   <div v-for="car in cars.slice(0, 5)" :key="car.id" class="flex items-center gap-3 border-b border-[#f1f2ee] py-3 last:border-0">
                     <img :src="car.image" :alt="car.name" class="h-9 w-12 rounded-lg bg-[#edf0e9] object-cover" /><div class="min-w-0 flex-1"><p class="truncate text-xs font-semibold text-[#536157]">{{ car.name }}</p><p class="mt-1 text-[10px] text-[#9aa39a]">{{ car.category }} · {{ car.seats }} kursi</p></div><span class="flex items-center gap-1.5 text-[10px] font-semibold" :class="availableQuantity(car) > 0 ? 'text-[#66866a]' : 'text-[#bf736c]'"><span class="h-1.5 w-1.5 rounded-full" :class="availableQuantity(car) > 0 ? 'bg-[#78a87d]' : 'bg-[#d5847c]'"></span>{{ availableQuantity(car) }} / {{ availability[car.id]?.quantity ?? car.quantity }} unit tersedia</span>
                   </div>
                   <div v-if="!cars.length" class="py-7 text-center text-xs text-[#89958c]">Belum ada armada.</div>
                 </div>
-                <button class="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#f3f5f1] py-2.5 text-xs font-bold text-[#547258] hover:bg-[#e9efe7]" @click="section = 'Armada'">Kelola armada <ArrowUpRight :size="14" /></button>
+                <button class="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-[#f3f5f1] py-2.5 text-xs font-bold text-[#547258] hover:bg-[#e9efe7]" @click="selectSection('Armada')">Kelola armada <ArrowUpRight :size="14" /></button>
               </section>
             </div>
           </template>
 
           <template v-else-if="section === 'Booking'">
-            <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p class="text-xs text-[#88938a]">Pesanan dan permintaan pelanggan</p><h1 class="font-display mt-1 text-[28px] font-extrabold tracking-[-1px] text-[#2d4033]">Booking</h1><p class="mt-1 text-sm text-[#7c887f]">Perbarui status dan pantau semua permintaan sewa.</p></div><div class="flex items-center gap-2 rounded-xl border border-[#e8ebe5] bg-white px-3 py-2.5"><Search :size="15" class="text-[#98a199]" /><input v-model="search" class="w-full bg-transparent text-xs outline-none placeholder:text-[#a0a9a1] sm:w-48" placeholder="Cari nama atau mobil..." /></div></div>
-            <div class="admin-shadow overflow-hidden rounded-[18px] border border-[#eceee9] bg-white"><div class="overflow-x-auto"><table class="w-full min-w-[860px] text-left"><thead><tr class="bg-[#fbfcfa] text-[10px] font-bold uppercase tracking-wider text-[#9aa39a]"><th class="px-5 py-3.5">Pelanggan</th><th class="px-4 py-3.5">Mobil & layanan</th><th class="px-4 py-3.5">Periode sewa</th><th class="px-4 py-3.5">Total</th><th class="px-4 py-3.5">Status</th><th class="px-4 py-3.5">Ubah status</th><th class="px-4 py-3.5"></th></tr></thead><tbody><tr v-for="booking in filteredBookings" :key="booking.id" class="border-t border-[#f1f2ee] text-xs"><td class="px-5 py-4"><p class="font-semibold text-[#4b5a4e]">{{ booking.customer_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.customer_email }}</p><a v-if="booking.customer_phone" :href="`tel:${booking.customer_phone.replace(/[^\\d+]/g, '')}`" class="mt-1 inline-block text-[10px] font-semibold text-[#52745b] hover:underline">Tel: {{ booking.customer_phone }}</a></td><td class="px-4 py-4"><p class="font-semibold text-[#58655a]">{{ booking.car_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.service_name }}</p><p v-if="booking.pickup_address" class="mt-1 max-w-[210px] text-[10px] leading-4 text-[#63766a]">Lokasi: {{ booking.pickup_address }}</p></td><td class="px-4 py-4 text-[#69766c]">{{ formatDate(booking.pickup_date) }}<p class="mt-1 text-[10px] text-[#959d95]">s/d {{ formatDate(booking.return_date) }}</p></td><td class="px-4 py-4 font-semibold text-[#536d56]">Rp{{ formatPrice(booking.total_price) }}</td><td class="px-4 py-4"><span class="rounded-full px-2.5 py-1 text-[10px] font-semibold" :class="statusClass(booking.status)">{{ statusLabel(booking.status) }}</span></td><td class="px-4 py-4"><select :value="booking.status" class="rounded-lg border border-[#e9ece6] bg-white px-2 py-1.5 text-[10px] text-[#627067] outline-none" @change="changeStatus(booking, $event.target.value, $event)"><option value="pending">Menunggu</option><option value="confirmed">Dikonfirmasi</option><option value="completed">Selesai</option><option value="cancelled">Dibatalkan</option></select></td><td class="px-4 py-4"><button class="rounded-lg p-2 text-[#b77b75] hover:bg-[#fbefed]" aria-label="Hapus booking" @click="removeRecord('bookings', booking)"><Trash2 :size="15" /></button></td></tr></tbody></table><div v-if="!filteredBookings.length" class="p-12 text-center text-sm text-[#89958c]">Belum ada booking yang cocok.</div></div></div>
+            <div class="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div><p class="text-xs text-[#88938a]">Pesanan dan permintaan pelanggan</p><h1 class="font-display mt-1 text-[28px] font-extrabold tracking-[-1px] text-[#2d4033]">Booking</h1><p class="mt-1 text-sm text-[#7c887f]">Pilih unit berdasarkan nomor polisi sebelum mengonfirmasi booking.</p></div>
+              <div class="flex items-center gap-2 rounded-xl border border-[#e8ebe5] bg-white px-3 py-2.5"><Search :size="15" class="text-[#98a199]" /><input v-model="search" class="w-full bg-transparent text-xs outline-none placeholder:text-[#a0a9a1] sm:w-48" placeholder="Cari nama atau mobil..." /></div>
+            </div>
+            <div class="admin-shadow overflow-hidden rounded-[18px] border border-[#eceee9] bg-white">
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[1100px] text-left">
+                  <thead><tr class="bg-[#fbfcfa] text-[10px] font-bold uppercase tracking-wider text-[#9aa39a]"><th class="px-5 py-3.5">Pelanggan</th><th class="px-4 py-3.5">Mobil & layanan</th><th class="px-4 py-3.5">Periode sewa</th><th class="px-4 py-3.5">Unit / nopol</th><th class="px-4 py-3.5">Total</th><th class="px-4 py-3.5">Status</th><th class="px-4 py-3.5">Tindakan</th><th class="px-4 py-3.5"></th></tr></thead>
+                  <tbody>
+                    <tr v-for="booking in filteredBookings" :key="booking.id" class="border-t border-[#f1f2ee] text-xs">
+                      <td class="px-5 py-4"><p class="font-semibold text-[#4b5a4e]">{{ booking.customer_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.customer_email }}</p><a v-if="booking.customer_phone" :href="`tel:${booking.customer_phone.replace(/[^\\d+]/g, '')}`" class="mt-1 inline-block text-[10px] font-semibold text-[#52745b] hover:underline">Tel: {{ booking.customer_phone }}</a></td>
+                      <td class="px-4 py-4"><p class="font-semibold text-[#58655a]">{{ booking.car_name }}</p><p class="mt-1 text-[10px] text-[#959d95]">{{ booking.service_name }}</p><p v-if="booking.pickup_address" class="mt-1 max-w-[210px] text-[10px] leading-4 text-[#63766a]">Lokasi: {{ booking.pickup_address }}</p></td>
+                      <td class="px-4 py-4 text-[#69766c]">{{ formatDate(booking.pickup_date) }}<p class="mt-1 text-[10px] text-[#959d95]">s/d {{ formatDate(booking.return_date) }}</p></td>
+                      <td class="px-4 py-4">
+                        <p v-if="booking.assigned_license_plate" class="font-semibold text-[#3f6348]">{{ booking.assigned_license_plate }}</p>
+                        <template v-else-if="booking.status === 'pending' || booking.status === 'confirmed'">
+                          <select :value="selectedPlateByBooking[booking.id] || ''" class="w-36 rounded-lg border border-[#e9ece6] bg-white px-2 py-1.5 text-[10px] text-[#627067] outline-none" @change="selectedPlateByBooking[booking.id] = $event.target.value">
+                            <option value="">Pilih nopol</option>
+                            <option v-for="plate in availablePlatesForBooking(booking)" :key="plate" :value="plate">{{ plate }}</option>
+                          </select>
+                          <p v-if="!availablePlatesForBooking(booking).length" class="mt-1 max-w-[150px] text-[10px] text-[#b47740]">Tidak ada unit kosong pada periode ini.</p>
+                        </template>
+                        <span v-else class="text-[10px] text-[#959d95]">-</span>
+                      </td>
+                      <td class="px-4 py-4 font-semibold text-[#536d56]">Rp{{ formatPrice(booking.total_price) }}</td>
+                      <td class="px-4 py-4"><span class="rounded-full px-2.5 py-1 text-[10px] font-semibold" :class="statusClass(booking.status)">{{ statusLabel(booking.status) }}</span></td>
+                      <td class="px-4 py-4">
+                        <button v-if="booking.status === 'pending'" class="rounded-lg bg-[#244b3b] px-3 py-2 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" :disabled="!availablePlatesForBooking(booking).includes(selectedPlateByBooking[booking.id])" @click="confirmBooking(booking)">Konfirmasi</button>
+                        <button v-else-if="booking.status === 'confirmed' && !booking.assigned_license_plate" class="rounded-lg bg-[#244b3b] px-3 py-2 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" :disabled="!availablePlatesForBooking(booking).includes(selectedPlateByBooking[booking.id])" @click="confirmBooking(booking)">Tetapkan unit</button>
+                        <select :value="booking.status" class="mt-1 rounded-lg border border-[#e9ece6] bg-white px-2 py-1.5 text-[10px] text-[#627067] outline-none" @change="changeStatus(booking, $event.target.value, $event)"><option value="pending">Menunggu</option><option value="confirmed">Dikonfirmasi</option><option value="completed">Selesai</option><option value="cancelled">Dibatalkan</option></select>
+                      </td>
+                      <td class="px-4 py-4"><button class="rounded-lg p-2 text-[#b77b75] hover:bg-[#fbefed]" aria-label="Hapus booking" @click="removeRecord('bookings', booking)"><Trash2 :size="15" /></button></td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div v-if="!filteredBookings.length" class="p-12 text-center text-sm text-[#89958c]">Belum ada booking yang cocok.</div>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="section === 'Tarif'">
+            <div class="mb-7"><p class="text-xs text-[#88938a]">Atur biaya jasa sopir yang masuk ke total booking</p><h1 class="font-display mt-1 text-[28px] font-extrabold tracking-[-1px] text-[#2d4033]">Tarif sopir</h1><p class="mt-1 text-sm text-[#7c887f]">Biaya ini dikenakan untuk semua layanan dan dikalikan dengan lama sewa.</p></div>
+            <form class="admin-shadow max-w-xl rounded-[18px] border border-[#eceee9] bg-white p-5 sm:p-6" @submit.prevent="savePricing">
+              <label class="block text-xs font-semibold text-[#647167]">Biaya sopir per hari (Rupiah)
+                <input v-model.number="driverFeeInput" required type="number" min="0" step="1000" class="mt-2 w-full rounded-xl border border-[#e5e9e3] px-3 py-3 text-sm outline-none focus:border-[#78967c]" />
+              </label>
+              <p class="mt-3 rounded-xl bg-[#f7f8f4] px-3.5 py-3 text-xs leading-5 text-[#78847a]">Contoh: Rp100.000 per hari × 2 hari = Rp200.000 biaya sopir. Total booking adalah biaya mobil + biaya sopir.</p>
+              <button :disabled="saving" class="mt-5 rounded-full bg-[#244b3b] px-5 py-3 text-xs font-bold text-white hover:bg-[#18392c] disabled:opacity-60">{{ saving ? 'Menyimpan...' : 'Simpan tarif sopir' }}</button>
+            </form>
+            <p v-if="isDemo" class="mt-4 max-w-xl rounded-xl bg-[#f8f6ee] px-3.5 py-3 text-[11px] leading-5 text-[#81734f]">Mode demo menyimpan tarif di browser ini saja. Di Supabase, jalankan migrasi fleet-pricing.sql untuk mengaktifkan pengaturan tarif cloud.</p>
           </template>
 
           <template v-else-if="section === 'Tampilan'">
@@ -481,6 +663,15 @@ async function removeRecord(type, record) {
           <label class="mb-4 block text-xs font-semibold text-[#647167]">Nama mobil<input v-model="editorForm.name" required class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm outline-none focus:border-[#78967c]" placeholder="Toyota Avanza Veloz" /></label>
           <div class="mb-4 grid grid-cols-2 gap-3"><label class="text-xs font-semibold text-[#647167]">Kategori<select v-model="editorForm.category" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] bg-white px-3 py-2.5 text-sm outline-none"><option>MPV</option><option>SUV</option><option>Premium</option><option>City car</option></select></label><label class="text-xs font-semibold text-[#647167]">Transmisi<select v-model="editorForm.transmission" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] bg-white px-3 py-2.5 text-sm outline-none"><option>Automatic</option><option>Manual</option></select></label></div>
           <div class="mb-4 grid grid-cols-3 gap-3"><label class="text-xs font-semibold text-[#647167]">Jumlah kursi<input v-model="editorForm.seats" required type="number" min="1" max="20" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm outline-none" /></label><label class="text-xs font-semibold text-[#647167]">Harga / hari<input v-model="editorForm.price" required type="number" min="1" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm outline-none" /></label><label class="text-xs font-semibold text-[#647167]">Jumlah unit<input v-model="editorForm.quantity" required type="number" min="0" max="999" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm outline-none" /></label></div>
+          <div class="mb-4 rounded-xl border border-[#e7ebe5] bg-[#fafbf9] p-3.5">
+            <p class="text-xs font-semibold text-[#647167]">Nomor polisi setiap unit ({{ Number(editorForm.quantity) || 0 }} unit)</p>
+            <div v-if="Number(editorForm.quantity) > 0" class="mt-3 grid gap-2 sm:grid-cols-2">
+              <label v-for="index in Number(editorForm.quantity)" :key="index" class="text-[11px] font-medium text-[#77847a]">Unit {{ index }}
+                <input :value="editorForm.license_plates?.[index - 1] || ''" required maxlength="20" class="mt-1 w-full rounded-lg border border-[#e5e9e3] bg-white px-3 py-2.5 text-sm uppercase outline-none focus:border-[#78967c]" placeholder="B 1234 ABC" @input="updateVehiclePlate(index - 1, $event.target.value)" />
+              </label>
+            </div>
+            <p class="mt-2 text-[10px] leading-4 text-[#89938a]">Isi satu nomor polisi untuk tiap unit. Jumlah input mengikuti jumlah unit mobil.</p>
+          </div>
           <div class="mb-4">
             <span class="block text-xs font-semibold text-[#647167]">Foto mobil</span>
             <div class="mt-1.5 flex items-center gap-3 rounded-xl border border-dashed border-[#cfd8ce] bg-[#fafbf9] p-3">

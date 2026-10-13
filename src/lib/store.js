@@ -22,6 +22,7 @@ const cars = ref(readLocal('cars', [])
 const services = ref(normalizeServices(readLocal('services', initialServices)))
 const bookings = ref(readLocal('bookings', []).filter((booking) => !demoBookingIds.has(booking.id)))
 const heroImage = ref(readLocal('hero-image', defaultHeroImage))
+const driverFeePerDay = ref(readLocal('driver-fee-per-day', 100000))
 const availability = ref({})
 const busy = ref(false)
 const storeError = ref('')
@@ -127,6 +128,128 @@ async function deleteHeroImage() {
   return heroImage.value
 }
 
+async function refreshRentalPricing() {
+  if (!isSupabaseConfigured) return driverFeePerDay.value
+
+  const { data, error } = await supabase
+    .from('rental_settings')
+    .select('driver_fee_per_day')
+    .eq('id', 1)
+    .single()
+  if (error) throw error
+  driverFeePerDay.value = Number(data.driver_fee_per_day)
+  return driverFeePerDay.value
+}
+
+async function saveDriverFee(value) {
+  const fee = Number(value)
+  if (!Number.isSafeInteger(fee) || fee < 0 || fee > 2147483647) {
+    throw new Error('Biaya sopir harus berupa angka rupiah antara 0 dan 2.147.483.647.')
+  }
+
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase
+      .from('rental_settings')
+      .update({ driver_fee_per_day: fee, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+      .select('driver_fee_per_day')
+      .single()
+    if (error) throw error
+    driverFeePerDay.value = Number(data.driver_fee_per_day)
+  } else {
+    driverFeePerDay.value = fee
+    persistLocal('driver-fee-per-day', fee)
+  }
+
+  return driverFeePerDay.value
+}
+
+async function getVehiclePlates(vehicleId) {
+  if (!isSupabaseConfigured) {
+    const platesByVehicle = readLocal('vehicle-plates', {})
+    return platesByVehicle[vehicleId] || []
+  }
+
+  const { data, error } = await supabase
+    .from('vehicle_units')
+    .select('license_plate')
+    .eq('vehicle_id', vehicleId)
+    .order('license_plate')
+  if (error) throw error
+  return data.map((unit) => unit.license_plate)
+}
+
+async function confirmBookingWithUnit(booking, licensePlate) {
+  if (!licensePlate) throw new Error('Pilih nomor polisi unit yang akan digunakan.')
+
+  let updatedBooking
+  if (isSupabaseConfigured) {
+    const { data, error } = await supabase.rpc('confirm_booking_with_unit', {
+      p_booking_id: booking.id,
+      p_license_plate: licensePlate,
+    })
+    if (error) throw error
+    updatedBooking = { ...booking, ...data }
+  } else {
+    updatedBooking = {
+      ...booking,
+      status: 'confirmed',
+      assigned_license_plate: licensePlate,
+    }
+    persistLocal('bookings', bookings.value.map((item) =>
+      item.id === booking.id ? updatedBooking : item,
+    ))
+  }
+
+  bookings.value = bookings.value.map((item) =>
+    item.id === booking.id ? updatedBooking : item,
+  )
+  return updatedBooking
+}
+
+async function saveCarWithPlates(record, licensePlates) {
+  const plates = licensePlates.map((plate) => plate.trim().toUpperCase())
+  const { license_plates: _licensePlates, ...vehicleRecord } = record
+  if (plates.length !== Number(record.quantity)) {
+    throw new Error(`Jumlah nomor polisi harus sama dengan jumlah unit (${record.quantity}).`)
+  }
+  if (plates.some((plate) => !plate || plate.length > 20)) {
+    throw new Error('Isi nomor polisi untuk setiap unit mobil (maksimal 20 karakter).')
+  }
+  if (new Set(plates).size !== plates.length) {
+    throw new Error('Nomor polisi untuk setiap unit harus berbeda.')
+  }
+
+  let vehicleSaved = false
+  try {
+    await saveRecord(cars, 'vehicles', vehicleRecord)
+    vehicleSaved = true
+
+    if (!isSupabaseConfigured) {
+      const platesByVehicle = readLocal('vehicle-plates', {})
+      platesByVehicle[vehicleRecord.id] = plates
+      persistLocal('vehicle-plates', platesByVehicle)
+      return vehicleRecord
+    }
+
+    const { error } = await supabase.rpc('save_vehicle_units', {
+      p_vehicle_id: vehicleRecord.id,
+      p_license_plates: plates,
+    })
+    if (error) {
+      if (error.code === '23505') {
+        throw new Error(`Data mobil tersimpan, tetapi nomor polisi sudah digunakan: ${error.message}`)
+      }
+      throw new Error(`Data mobil tersimpan, tetapi nomor polisi gagal diperbarui: ${error.message}`)
+    }
+
+    return vehicleRecord
+  } catch (error) {
+    if (vehicleSaved && error instanceof Error) error.vehicleSaved = true
+    throw error
+  }
+}
+
 async function loadCollection(table, fallback) {
   if (!isSupabaseConfigured) return fallback
   const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false })
@@ -229,8 +352,14 @@ export const useStore = () => ({
   isDemo,
   availableCars: computed(() => cars.value.filter((car) => car.available)),
   heroImage,
+  driverFeePerDay,
   getAvailability,
   refreshAvailability,
+  refreshRentalPricing,
+  saveDriverFee,
+  getVehiclePlates,
+  confirmBookingWithUnit,
+  saveCarWithPlates,
   refreshHeroImage,
   saveHeroImage,
   deleteHeroImage,

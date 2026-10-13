@@ -172,6 +172,7 @@ export default async function handler(req, res) {
   }
 
   let bookingError
+  let bookingResult
   try {
     const result = await supabase.rpc('create_public_booking', {
       p_customer_name: req.body.customer_name.trim(),
@@ -184,6 +185,7 @@ export default async function handler(req, res) {
       p_pickup_address: req.body.pickup_address?.trim() || null,
     })
     bookingError = result.error
+    bookingResult = result.data
   } catch (error) {
     console.error('Booking creation request failed.', error instanceof Error ? error.name : 'unknown')
     return json(res, 503, { error: 'Booking gagal disimpan. Silakan coba kembali.' })
@@ -203,5 +205,5 @@ export default async function handler(req, res) {
     return json(res, 500, { error: 'Booking gagal disimpan. Silakan coba kembali.' })
   }
 
-  return json(res, 201, { success: true })
+  return json(res, 201, { success: true, ...bookingResult })
 }

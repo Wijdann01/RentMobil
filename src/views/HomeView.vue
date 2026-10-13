@@ -5,7 +5,7 @@ import { formatLocalDate } from '../data'
 import TurnstileWidget from '../components/TurnstileWidget.vue'
 import { useStore } from '../lib/store'
 
-const { availableCars, availability, services, heroImage, saveBooking, getAvailability, refresh, refreshHeroImage, isDemo } = useStore()
+const { availableCars, availability, services, heroImage, driverFeePerDay, saveBooking, getAvailability, refresh, refreshHeroImage, refreshRentalPricing, isDemo } = useStore()
 const selectedCategory = ref('Semua')
 const bookingCar = ref(null)
 const submitting = ref(false)
@@ -20,19 +20,24 @@ const bookingAvailability = ref(null)
 const form = ref({ name: '', email: '', phone: '', pickup: '', return: '', service: 'Mobil + sopir', pickupAddress: '' })
 const selectedService = computed(() => services.value.find((service) => service.name === form.value.service && service.active))
 const requiresAddress = computed(() => Boolean(selectedService.value?.requires_address))
-watch(requiresAddress, (value) => {
-  if (!value) form.value.pickupAddress = ''
-})
 const categories = ['Semua', 'MPV', 'SUV', 'Premium']
 const visibleCars = computed(() => selectedCategory.value === 'Semua' ? availableCars.value : availableCars.value.filter((car) => car.category === selectedCategory.value))
 const formatPrice = (value) => new Intl.NumberFormat('id-ID').format(value)
 const today = formatLocalDate()
 const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || ''
+const rentalDays = computed(() => {
+  if (!form.value.pickup || !form.value.return || form.value.return < form.value.pickup) return 0
+  const days = (Date.parse(`${form.value.return}T00:00:00Z`) - Date.parse(`${form.value.pickup}T00:00:00Z`)) / 86400000
+  return Math.max(1, days)
+})
+const estimatedVehicleTotal = computed(() => Number(bookingCar.value?.price || 0) * rentalDays.value)
+const estimatedDriverTotal = computed(() => Number(driverFeePerDay.value || 0) * rentalDays.value)
 
 onMounted(() => {
   refresh({ includeBookings: false, pickupDate: today, returnDate: today })
     .catch((error) => console.error('Gagal memuat katalog mobil.', error))
   refreshHeroImage().catch((error) => console.error('Gagal memuat gambar hero website.', error))
+  refreshRentalPricing().catch((error) => console.error('Gagal memuat tarif sopir.', error))
 })
 
 function openBooking(car) {
@@ -117,8 +122,9 @@ async function submitBooking() {
       service_name: form.value.service,
       pickup_date: form.value.pickup,
       return_date: form.value.return,
-      pickup_address: requiresAddress.value ? form.value.pickupAddress.trim() : null,
+      pickup_address: form.value.pickupAddress.trim() || null,
     }
+    let confirmedTotal
     if (isDemo) {
       const days = Math.max(1, Math.round(
         (Date.parse(`${form.value.return}T00:00:00Z`) - Date.parse(`${form.value.pickup}T00:00:00Z`)) / 86400000,
@@ -127,10 +133,11 @@ async function submitBooking() {
         ...bookingRequest,
         id: crypto.randomUUID(),
         car_name: bookingCar.value.name,
-        total_price: bookingCar.value.price * days,
+        total_price: (bookingCar.value.price + Number(driverFeePerDay.value || 0)) * days,
         status: 'pending',
         created_at: new Date().toISOString(),
       })
+      confirmedTotal = (bookingCar.value.price + Number(driverFeePerDay.value || 0)) * days
     } else {
       const response = await fetch('/api/bookings', {
         method: 'POST',
@@ -139,8 +146,9 @@ async function submitBooking() {
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || 'Booking gagal dikirim. Coba lagi.')
+      confirmedTotal = Number(result.total_price)
     }
-    notice.value = 'Booking terkirim! Mohon konfirmasi kembali dengan Customer Service.'
+    notice.value = `Booking terkirim${confirmedTotal ? ` dengan estimasi total Rp${formatPrice(confirmedTotal)}` : ''}! Mohon konfirmasi kembali dengan Customer Service.`
     bookingCar.value = null
   } catch (error) {
     bookingError.value = error.code === '23505'
@@ -278,7 +286,7 @@ async function submitBooking() {
           <label class="text-xs font-semibold text-[#647167]">Tanggal ambil<input v-model="form.pickup" required type="date" :min="today" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm text-[#344238] outline-none focus:border-[#78967c]" /></label>
           <label class="text-xs font-semibold text-[#647167]">Tanggal kembali<input v-model="form.return" required type="date" :min="form.pickup || today" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm text-[#344238] outline-none focus:border-[#78967c]" /></label>
           <label class="text-xs font-semibold text-[#647167] sm:col-span-2">Pilih layanan<select v-model="form.service" required class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] bg-white px-3 py-2.5 text-sm text-[#344238] outline-none focus:border-[#78967c]"><option disabled value="">Pilih layanan</option><option v-for="service in services.filter((item) => item.active)" :key="service.id" :value="service.name">{{ service.name }}</option></select></label>
-          <label v-if="requiresAddress" class="text-xs font-semibold text-[#647167] sm:col-span-2">Alamat / nama lokasi jemput<input v-model="form.pickupAddress" required maxlength="500" autocomplete="street-address" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm text-[#344238] outline-none focus:border-[#78967c]" :placeholder="form.service.toLowerCase().includes('bandara') ? 'Contoh: Bandara Soekarno-Hatta, Terminal 3' : 'Contoh: Stasiun Gambir, pintu selatan'" /><span class="mt-1 block text-[10px] font-normal text-[#879188]">Tuliskan alamat atau nama lokasi antar/jemput.</span></label>
+          <label class="text-xs font-semibold text-[#647167] sm:col-span-2">Alamat tujuan / lokasi antar jemput{{ requiresAddress ? '' : ' (opsional)' }}<input v-model.trim="form.pickupAddress" :required="requiresAddress" maxlength="500" autocomplete="street-address" class="mt-1.5 w-full rounded-xl border border-[#e5e9e3] px-3 py-2.5 text-sm text-[#344238] outline-none focus:border-[#78967c]" :placeholder="form.service.toLowerCase().includes('bandara') ? 'Contoh: Bandara Soekarno-Hatta, Terminal 3' : form.service.toLowerCase().includes('stasiun') ? 'Contoh: Stasiun Gambir, pintu selatan' : 'Contoh: alamat atau kota tujuan perjalanan'" /><span class="mt-1 block text-[10px] font-normal text-[#879188]">{{ requiresAddress ? 'Alamat atau lokasi antar/jemput wajib diisi untuk layanan ini.' : 'Isi tujuan perjalanan agar Customer Service dapat menyiapkan perjalanan.' }}</span></label>
         </div>
         <TurnstileWidget
           v-if="!isDemo && turnstileSiteKey"
@@ -292,6 +300,12 @@ async function submitBooking() {
         <p v-if="checkingAvailability" class="mt-3 text-xs text-[#738376]">Memeriksa ketersediaan mobil...</p>
         <p v-else-if="availabilityError" class="mt-3 text-xs text-red-600">{{ availabilityError }}</p>
         <p v-else-if="bookingAvailability" class="mt-3 text-xs" :class="bookingAvailability.available_quantity > 0 ? 'text-[#527455]' : 'text-[#b05f51]'">{{ bookingAvailability.available_quantity }} dari {{ bookingAvailability.quantity }} unit tersedia pada tanggal pilihan.</p>
+        <div v-if="bookingCar && rentalDays" class="mt-4 space-y-1.5 rounded-xl border border-[#e9ece6] bg-[#fafbf8] px-3.5 py-3 text-xs text-[#647167]">
+          <div class="flex justify-between gap-3"><span>Sewa mobil ({{ rentalDays }} hari)</span><span>Rp{{ formatPrice(estimatedVehicleTotal) }}</span></div>
+          <div class="flex justify-between gap-3"><span>Jasa sopir ({{ rentalDays }} hari)</span><span>Rp{{ formatPrice(estimatedDriverTotal) }}</span></div>
+          <div class="flex justify-between gap-3 border-t border-[#e9ece6] pt-2 font-bold text-[#355a43]"><span>Estimasi total</span><span>Rp{{ formatPrice(estimatedVehicleTotal + estimatedDriverTotal) }}</span></div>
+          <p class="pt-1 text-[10px] text-[#89938a]">Biaya sopir Rp{{ formatPrice(driverFeePerDay) }} per hari. Total final dihitung kembali oleh sistem saat booking.</p>
+        </div>
         <p v-if="bookingError" class="mt-3 text-xs text-red-600">{{ bookingError }}</p>
         <p class="mt-4 rounded-xl border border-[#e9eadf] bg-[#f8f8f1] px-3.5 py-3 text-xs leading-5 text-[#69766b]">Setelah mengirim booking, mohon konfirmasi kembali dengan Customer Service kami agar detail perjalanan dan ketersediaan dapat dipastikan.</p>
         <button :disabled="submitting || checkingAvailability || Boolean(bookingAvailability && bookingAvailability.available_quantity < 1) || Boolean(availabilityError) || (!isDemo && !turnstileSiteKey)" class="mt-5 w-full rounded-full bg-[#244b3b] py-3.5 text-sm font-bold text-white transition hover:bg-[#18392c] disabled:cursor-not-allowed disabled:opacity-60">{{ submitting ? 'Mengirim...' : 'Kirim permintaan booking' }}</button>

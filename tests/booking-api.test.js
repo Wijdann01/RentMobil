@@ -8,6 +8,15 @@ let requests
 let rateLimitAllowed = true
 let captchaResult = { success: true, hostname: 'jalanin.test', action: 'booking' }
 let bookingErrorCode
+let bookingResult = {
+  id: 'booking-id',
+  rental_days: 2,
+  vehicle_price_per_day: 450000,
+  vehicle_total: 900000,
+  driver_fee_per_day: 100000,
+  driver_total: 200000,
+  total_price: 1100000,
+}
 
 const validBody = () => ({
   customer_name: 'Nama Pelanggan',
@@ -80,7 +89,7 @@ before(() => {
     if (url.endsWith('/rpc/create_public_booking')) {
       requests.push({ type: 'create-booking', body: JSON.parse(options.body) })
       return new Response(
-        JSON.stringify(bookingErrorCode ? { code: bookingErrorCode, message: 'Duplicate booking.' } : { id: 'booking-id' }),
+        JSON.stringify(bookingErrorCode ? { code: bookingErrorCode, message: 'Duplicate booking.' } : bookingResult),
         {
           status: bookingErrorCode ? 409 : 200,
           headers: { 'Content-Type': 'application/json' },
@@ -104,6 +113,15 @@ beforeEach(() => {
   rateLimitAllowed = true
   captchaResult = { success: true, hostname: 'jalanin.test', action: 'booking' }
   bookingErrorCode = undefined
+  bookingResult = {
+    id: 'booking-id',
+    rental_days: 2,
+    vehicle_price_per_day: 450000,
+    vehicle_total: 900000,
+    driver_fee_per_day: 100000,
+    driver_total: 200000,
+    total_price: 1100000,
+  }
 })
 
 test('normalizes Supabase REST endpoint URLs before creating RPC clients', () => {
@@ -115,13 +133,14 @@ test('creates bookings through server-only RPC without accepting client price or
   const res = await invoke()
 
   assert.equal(res.statusCode, 201)
-  assert.deepEqual(res.body, { success: true })
+  assert.deepEqual(res.body, { success: true, ...bookingResult })
   const bookingRequest = requests.find((request) => request.type === 'create-booking')
   assert.ok(bookingRequest)
   assert.equal('total_price' in bookingRequest.body, false)
   assert.equal('status' in bookingRequest.body, false)
   assert.equal('car_name' in bookingRequest.body, false)
   assert.equal(bookingRequest.body.p_customer_email, 'pelanggan@example.com')
+  assert.equal(requests.some((request) => request.type === 'email'), false)
 })
 
 test('rejects invalid dates before contacting external services', async () => {
